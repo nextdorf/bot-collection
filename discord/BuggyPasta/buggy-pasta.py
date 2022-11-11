@@ -1,4 +1,9 @@
-from utils import *
+try:
+  from common.utils import *
+except:
+  import common
+  from utils import *
+
 from ascii_art import *
 from cowsay_cmd import Cowsay
 import logging
@@ -45,5 +50,5 @@ async def on_message(msg: Message):
   if s.find('arch btw')>=0:
     await msg.reply(f'```{ascii_logos["arch"]}```')
 
-runner = botConfig.getRunner('Discord', 'BuggyPasta', bot)
+runner = botConfig.apply('Discord', 'BuggyPasta', bot)
 runner(log_handler=handler, log_level=logging.DEBUG)
