@@ -52,7 +52,7 @@ class ObsHandle(http.server.BaseHTTPRequestHandler):
     if mimetype:
       path = str(Path('.') / self.path[1:])
       with open(path, 'rb') as f:
-        self.send_response(200)
+        self.send_response(http.HTTPStatus.OK)
         self.send_header('Content-type',mimetype)
         self.end_headers()
         self.wfile.write(f.read())
