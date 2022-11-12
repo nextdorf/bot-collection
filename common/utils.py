@@ -146,7 +146,6 @@ class twitchEntry:
   def __str__(self) -> str:
     return repr(self)
 
-
 class twitchUserEntry:
   def __init__(self, name: str, twitchApp: twitchEntry, *args, access_token:str|None=None, **kwargs):
     self.name = name
@@ -194,6 +193,21 @@ class twitchUserEntry:
     return repr(self)
 
 
+class obsEntry:
+  def __init__(self, name: str, *args, host='localhost', port=4455, password:str|None=None, **kwargs):
+    self.name = name
+    self._host = host
+    self._port = port
+    self.__password = password
+  def apply(self, obs: 'ObsServer'):
+    return lambda **kwargs: obs._connect(pwd=self.__password, **kwargs)
+
+  def __repr__(self) -> str:
+    return f'Obs[ {self.name}@{self._host} ]'
+  def __str__(self) -> str:
+    return repr(self)
+
+
 def appendCollection(a: list|dict, b: list|dict):
   if isinstance(a, dict):
     if isinstance(b, dict):
@@ -227,6 +241,7 @@ class config(dict):
     self.refPaths: list[Path] = []
     self.__parseDiscord()
     self.__parseTwitch()
+    self.__parseObs()
     self.__parseImport()
 
   @staticmethod
@@ -257,7 +272,6 @@ class config(dict):
   def __parseTwitch(self):
     if 'Twitch' not in self:
       return
-    # self['Twitch'] = { name: twitchEntry(name, **vals) for name, vals in self['Twitch'].items() }
     tmp = {}
     for name, vals in self['Twitch'].items():
       tmp[name] = {}
@@ -267,6 +281,11 @@ class config(dict):
       for user, token in tokens.items():
         tmp[name][user] = twitchUserEntry(user, app, access_token=token)
     self['Twitch'] = tmp
+
+  def __parseObs(self):
+    if 'Obs' not in self:
+      return
+    self['Obs'] = obsEntry('Obs-websocket', **self['Obs'])
 
   def __parseImport(self):
     if 'import' not in self:
