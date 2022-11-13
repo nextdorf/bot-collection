@@ -15,7 +15,9 @@ from collections import namedtuple
 import hashlib
 import base64
 from math import inf
-
+from pathlib import Path
+import PIL.Image
+import random
 
 OpCode0 = namedtuple('OpCode0', 'obsWSVer rpcVer auth')
 OpCode0Auth = namedtuple('OpCode0Auth', 'challenge salt')
@@ -25,6 +27,24 @@ OpCode7 = namedtuple('OpCode7', 'type id status data')
 OpCode7Status = namedtuple('OpCode7Status', 'result code comment')
 
 class EventSubscription(int):
+  _None: 'EventSubscription' = None
+  General: 'EventSubscription' = None
+  Config: 'EventSubscription' = None
+  Scenes: 'EventSubscription' = None
+  Inputs: 'EventSubscription' = None
+  Transitions: 'EventSubscription' = None
+  Filters: 'EventSubscription' = None
+  Outputs: 'EventSubscription' = None
+  SceneItems: 'EventSubscription' = None
+  MediaInputs: 'EventSubscription' = None
+  Vendors: 'EventSubscription' = None
+  UI: 'EventSubscription' = None
+  AllLower: 'EventSubscription' = None
+  InputVolumeMeters: 'EventSubscription' = None
+  InputActiveStateChanged: 'EventSubscription' = None
+  InputShowStateChanged: 'EventSubscription' = None
+  SceneItemTransformChanged: 'EventSubscription' = None
+
   def __and__(self, __n: int) -> 'EventSubscription':
     return EventSubscription(super().__and__(__n))
   def __rand__(self, __n: int) -> 'EventSubscription':
@@ -78,7 +98,7 @@ class ObsServer:
     helloMsg: OpCode0 = await self.recv()
     idAuth = ObsServer.createAuthentification(helloMsg.auth, pwd)
     await self.sendIdentify(min(helloMsg.rpcVer, rpcVer), idAuth, subscriptions)
-    helloMsg2: OpCode2 = await obs.recv()
+    helloMsg2: OpCode2 = await self.recv()
     if overrideRpcVer:
       self.rpcVer = helloMsg2.rpcVer
     return helloMsg2.rpcVer
@@ -127,7 +147,7 @@ class ObsServer:
   async def sendReidentify(self, subscriptions:int|None = None):
     await self.sendArgs(op=3, d_eventSubscriptions=subscriptions)
 
-  async def sendRquest(self, type:str, id:str, data:None|Any = None, sep='_', **innerData):
+  async def sendRequest(self, type:str, id:str, data:None|Any = None, sep='_', **innerData):
     kwargs = {}
     kwargs[f'd{sep}requestType'] = type
     kwargs[f'd{sep}requestId'] = id
@@ -158,22 +178,88 @@ class ObsServer:
         ws[i] = [0]*m + ws[i]
     return '.'.join(map(str, min(ws)))
 
-obs = ObsServer()
-asyncio.run(botConfig['Obs'].apply(obs)(subscriptions=0))
+  async def getResponse(self, type:str, id:str, data:None|Any = None, sep='_', **innerData):
+    await self.sendRequest(type, id, data, sep, **innerData)
+    ret: OpCode7|None = None
+    while not (isinstance(ret, OpCode7) and ret.id == id):
+      ret = await self.recv()
+    return ret
+
+  async def noImage(self, sceneName:str, itemName: str):
+    idStr = f'noItem({sceneName}, {itemName})'
+    fullId = f'{idStr}_{random.randint(0, 999)}'
+
+    overrideInputSettings = dict(file='')
+    resp = await self.getResponse('SetInputSettings', fullId,
+      inputName=itemName, inputSettings=overrideInputSettings)
+    status: OpCode7Status = resp.status
+    return status
+
+  async def changeImage(self, sceneName:str, itemName: str, path: str|None, width: int, height:int, srcWidth: int|None=None, srcHeight: int|None=None):
+    if path is None:
+      return await self.noImage(sceneName, itemName)
+    if width is None and height is None:
+      return
+    absPath = (Path('.') / path).expanduser().resolve()
+    if not (absPath.exists() and absPath.is_file()):
+      return None
+    absPath = str(absPath)
+    if srcWidth is None or srcHeight is None:
+      img = PIL.Image.open(absPath)
+      srcWidth, srcHeight = img.size
+
+    idStr = f'changeItem({sceneName}, {itemName}, {path}, {width}, {height})'
+    fullId = f'{idStr}_{random.randint(0, 999)}'
+
+    overrideInputSettings = dict(file=absPath)
+    resp = await self.getResponse('SetInputSettings', fullId,
+      inputName=itemName, inputSettings=overrideInputSettings)
+    status: OpCode7Status = resp.status
+    if not status.result:
+      return status
+
+    sceneItems = await self.getResponse('GetSceneItemList', fullId,
+      sceneName='Screen')
+    status: OpCode7Status = sceneItems.status
+    if not status.result:
+      return status
+
+    possibleItems = [x for x in sceneItems.data['sceneItems'] if x['sourceName'] == itemName]
+    imgItem = possibleItems[0]
+    newTransformation:dict = imgItem['sceneItemTransform'].copy()
+    newTransformation.update(dict(
+      scaleX=width/srcWidth if width is not None else height/srcHeight,
+      scaleY=height/srcHeight if height is not None else width/srcWidth
+      ))
+    resp = await self.getResponse('SetSceneItemTransform', fullId, 
+      sceneName=sceneName,
+      sceneItemId=imgItem['sceneItemId'],
+      sceneItemTransform = newTransformation
+      )
+    status: OpCode7Status = resp.status
+    return status
+
+  async def restartVideo(self, sceneName:str, itemName: str):
+    print(itemName)
+    idStr = f'restartVideo({sceneName}, {itemName})'
+    fullId = f'{idStr}_{random.randint(0, 999)}'
+    resp = await self.getResponse('TriggerMediaInputAction', fullId, 
+      inputName=itemName,
+      mediaAction = 'OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART' )
+    print(resp)
+    status: OpCode7Status = resp.status
+    return status
 
 
-#asyncio.run(obs.sendRquest('GetSceneItemList', 'AAA', sceneName='Scene 3'))
-asyncio.run(obs.sendRquest('GetInputList', ''))
-inputList = asyncio.run(obs.recv())
-inputList
+# obs = ObsServer()
+# restartAction = 'OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART'
+# asyncio.run(botConfig['Obs'].apply(obs)(subscriptions=EventSubscription.MediaInputs))
+# resp = asyncio.run(obs.getResponse('TriggerMediaInputAction', '', 
+#   inputName='rusure', mediaAction = restartAction))
+# resp
 
-inputName = 'Image'
-asyncio.run(obs.sendRquest('GetInputSettings', '', inputName=inputName))
-img = asyncio.run(obs.recv())
-img
+# status = asyncio.run(obs.changeImage('Screen', 'Image', 'images/Tux.png', 300, 300))
+# status = asyncio.run(obs.changeImage('Screen', 'Image', None, 300, 300))
 
-overrideInputSettings = dict(file='path/to/image')
-asyncio.run(obs.sendRquest('SetInputSettings', '', inputName=inputName, inputSettings=overrideInputSettings))
-res = asyncio.run(obs.recv())
-res
+
 

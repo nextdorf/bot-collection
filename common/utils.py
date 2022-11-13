@@ -339,7 +339,8 @@ class config(dict):
     return repr(self)
     
 
-botConfig = config.fromFile('../../local/config')
+# botConfig = config.fromFile('../local/config')
+botConfig = config.fromFile('~/.config/bot-collection/config')
 if __name__ == '__main__':
   botConfig
   w = asyncio.run(botConfig.generateTwitchAccessTokens())
