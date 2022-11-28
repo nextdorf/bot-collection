@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Awaitable
 import nest_asyncio
 nest_asyncio.apply() #Wichtig für Jupyter Notebook
 
@@ -78,6 +78,15 @@ EventSubscription.InputShowStateChanged     = EventSubscription(1 << 18)
 EventSubscription.SceneItemTransformChanged = EventSubscription(1 << 19)
 
 
+class EventListener:
+  def __init__(self, func: Callable[['EventListener', OpCode5], Awaitable[bool]], **kwargs):
+    self.func = func
+    for (k, v) in kwargs.items():
+      setattr(self, k, v)
+  async def __call__(self, event: OpCode5) -> bool:
+    'Returns whether listener wants to continue to listen to future events'
+    return await self.func(self, event)
+
 
 class ObsServer:
   def __init__(self):
@@ -86,6 +95,7 @@ class ObsServer:
     self.port = obs._port
     self.ws: wsc.WebSocketClientProtocol = None
     self.rpcVer = None
+    self.eventListeners = []
   
   async def _connectOnly(self):
     self.ws = await wsc.connect(f'ws://{self.host}:{self.port}')
@@ -103,6 +113,17 @@ class ObsServer:
       self.rpcVer = helloMsg2.rpcVer
     return helloMsg2.rpcVer
 
+  async def handleListeners(self, event: OpCode5):
+    i = 0
+    while i < len(self.eventListeners):
+      listener = self.eventListeners[i]
+      continueListening = await listener(event)
+      if not continueListening:
+        del self.eventListeners[i]
+      else:
+        i+=1
+
+
 
   async def recv(self):
     msg: dict[str, any] = json.loads(await self.ws.recv())
@@ -116,7 +137,9 @@ class ObsServer:
     elif op == 2:
       return OpCode2(d['negotiatedRpcVersion'])
     elif op == 5:
-      return OpCode5(d['eventType'], d['eventIntent'], d['eventData'])
+      event = OpCode5(d['eventType'], d['eventIntent'], d['eventData'])
+      await self.handleListeners(event)
+      return event
     elif op == 7:
       status: dict
       type, id, status, data = [d.get(k, None) for k in 'requestType requestId requestStatus responseData'.split()]
@@ -251,15 +274,148 @@ class ObsServer:
     return status
 
 
-# obs = ObsServer()
-# restartAction = 'OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART'
-# asyncio.run(botConfig['Obs'].apply(obs)(subscriptions=EventSubscription.MediaInputs))
-# resp = asyncio.run(obs.getResponse('TriggerMediaInputAction', '', 
-#   inputName='rusure', mediaAction = restartAction))
-# resp
+  async def startVideo(self, name: str, volume_in_db:int, path: str|Path, transformation:dict[str, str], monitor_type='OBS_MONITORING_TYPE_MONITOR_ONLY', sceneName='Screen'):
+    if not isinstance(path, Path): path = Path(path)
+    path = str(path.expanduser().resolve())
+    idStr = f'startVideo({name}, {volume_in_db}, {path})'
+    fullId = f'{idStr}_{random.randint(0, 999)}'
+    status: OpCode7Status
 
-# status = asyncio.run(obs.changeImage('Screen', 'Image', 'images/Tux.png', 300, 300))
-# status = asyncio.run(obs.changeImage('Screen', 'Image', None, 300, 300))
+    resp = await self.getResponse('CreateInput', fullId, 
+      sceneName = sceneName, inputName=name, inputKind='ffmpeg_source')
+    status = resp.status
+    if not status.result:
+      return status
+    sceneItemId = resp.data['sceneItemId']
+
+    resp = await self.getResponse('SetInputAudioMonitorType', fullId,
+      inputName=name, monitorType=monitor_type)
+    status = resp.status
+    if not status.result:
+      await self.getResponse('RemoveSceneItem', fullId, sceneName=sceneName, sceneItemId=sceneItemId)
+      return status
+
+    resp = await self.getResponse('SetSceneItemTransform', fullId,
+      sceneName=sceneName, sceneItemId=sceneItemId, sceneItemTransform=sceneItemTransform)
+    status = resp.status
+    if not status.result:
+      await self.getResponse('RemoveSceneItem', fullId, sceneName=sceneName, sceneItemId=sceneItemId)
+      return status
+    
+    resp = await self.getResponse('SetInputVolume', fullId,
+      inputName=name, inputVolumeDb=volume_in_db)
+    status = resp.status
+    if not status.result:
+      await self.getResponse('RemoveSceneItem', fullId, sceneName=sceneName, sceneItemId=sceneItemId)
+      return status
+
+    resp = await self.getResponse('CreateSourceFilter', fullId,
+      sourceName=name, filterName='Chroma Key', filterKind='chroma_key_filter_v2',
+      filterSettings=dict(key_color_type='green'))
+    status = resp.status
+    if not status.result:
+      await self.getResponse('RemoveSceneItem', fullId, sceneName=sceneName, sceneItemId=sceneItemId)
+      return status
+
+    resp = await self.getResponse('SetInputSettings', fullId,
+      inputName=name, inputSettings=dict(local_file=path))
+    status = resp.status
+    if not status.result:
+      await self.getResponse('RemoveSceneItem', fullId, sceneName=sceneName, sceneItemId=sceneItemId)
+      return status
+
+    async def callback(listener: EventListener, event: OpCode5):
+      if not (
+              event.intent|EventSubscription.MediaInputs
+          and event.type == 'MediaInputPlaybackEnded'
+          and event.data.get('inputName') == listener.inputName
+          ):
+        return True
+      else:
+        await self.getResponse('RemoveSceneItem', fullId, sceneName=sceneName, sceneItemId=sceneItemId)
+        return False
+
+    listener = EventListener(callback, inputName=name)
+    self.eventListeners.append(listener)
+    return status
+
+
+if __name__ == '__main__':
+  obs = ObsServer()
+  restartAction = 'OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART'
+  asyncio.run(botConfig['Obs'].apply(obs)(subscriptions=EventSubscription.MediaInputs))
+  resp = asyncio.run(obs.getResponse('GetSceneItemList', '', 
+    sceneName='Videos'))
+  resp
+
+  
+  inputName = 'new_video'
+  volume_in_db = -12
+  test_path = Path('videos/lol.webm')
+  monitor_type = 'OBS_MONITORING_TYPE_MONITOR_ONLY'
+  sceneItemTransform = dict(
+    alignment = 5,
+    cropBottom = 0,
+    cropLeft = 320,
+    cropRight = 300,
+    cropTop = 0,
+    height = 0.0,
+    positionX = 728.5416259765625,
+    positionY = 285.0,
+    rotation = 0.0,
+    scaleX = -0.5604166388511658,
+    scaleY = 0.5601851940155029,
+    sourceHeight = 0.0,
+    sourceWidth = 0.0,
+    width = -0.0
+  )
+
+  resp = asyncio.run(obs.startVideo(inputName, volume_in_db, test_path, sceneItemTransform))
+  resp
+  while True:
+    asyncio.run(obs.recv())
+
+  # resp = asyncio.run(obs.getResponse('CreateInput', '', 
+  #   sceneName = 'Screen', inputName=inputName, inputKind='ffmpeg_source'))
+  # resp
+  # sceneItemId = resp.data['sceneItemId']
+
+  # resp = asyncio.run(obs.getResponse('SetInputAudioMonitorType', '',
+  #   inputName=inputName, monitorType=monitor_type))
+  # resp
+
+  # resp = asyncio.run(obs.getResponse('SetSceneItemTransform', '',
+  #   sceneName='Screen', sceneItemId=sceneItemId, sceneItemTransform=sceneItemTransform))
+  # resp
+  
+  # resp = asyncio.run(obs.getResponse('SetInputVolume', '',
+  #   inputName=inputName, inputVolumeDb=volume_in_db))
+  # resp
+
+  # resp = asyncio.run(obs.getResponse('CreateSourceFilter', '',
+  #   sourceName=inputName, filterName='Chroma Key', filterKind='chroma_key_filter_v2',
+  #   filterSettings=dict(key_color_type='green')))
+  # resp
+
+  # resp = asyncio.run(obs.getResponse('SetInputSettings', '',
+  #   inputName=inputName, inputSettings=dict(local_file=test_path)))
+  # resp
+
+  # resp0: None|OpCode5 = None
+  # while not (isinstance(resp0, OpCode5) and resp0.intent|EventSubscription.MediaInputs and resp0.type == 'MediaInputPlaybackEnded'):
+  #   resp0 = asyncio.run(obs.recv())
+
+  # resp = asyncio.run(obs.getResponse('RemoveSceneItem', '', 
+  #   sceneName='Screen', sceneItemId=sceneItemId))
+  # resp
+
+
+  # resp = asyncio.run(obs.getResponse('TriggerMediaInputAction', '', 
+  #   inputName='rusure', mediaAction = restartAction))
+  # resp
+
+  # status = asyncio.run(obs.changeImage('Screen', 'Image', 'images/Tux.png', 300, 300))
+  # status = asyncio.run(obs.changeImage('Screen', 'Image', None, 300, 300))
 
 
 

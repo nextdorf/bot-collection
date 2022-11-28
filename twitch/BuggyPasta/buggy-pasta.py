@@ -108,12 +108,31 @@ async def video(ctx: commands.Context, videoName:str=''):
   regex = re.fullmatch('[\w ]*', videoName if videoName else '')
   if not regex: return
   videoName = videoName.lower()
-  if videoName.lower() == 'list':
-    imgs = [p.stem for p in Path('videos').glob('*')]
-    knownImgs = '"%s"' % ('", "'.join(imgs))
-    await ctx.send(f'@{ctx.author.name}, ich kenne: {knownImgs}')
+  if videoName == 'list':
+    imgs = [p.stem for p in Path('videos').glob('*') if p.is_file()]
+    # knownImgs = '"%s"' % ('", "'.join(imgs))
+    knownImgs = ' '.join(imgs)
+    await ctx.send(f'@{ctx.author.name} {knownImgs}')
     return
-  await bot.obs.restartVideo('Screen', videoName)
+  else:
+    if re.fullmatch('noooo+[!1h]*', videoName): videoName = 'noooo'
+    await bot.obs.restartVideo('Screen', videoName)
+
+for p in Path('videos').glob('*'):
+  if not p.is_file():
+    continue
+  def cmdGenerator(videoName: str):
+    arr = [videoName]
+    async def inner(ctx: commands.Context):
+      videoName = arr[0]
+      print(repr(videoName))
+      videoName = videoName.lower()
+      if re.fullmatch('noooo+[!1h]*', videoName): videoName = 'noooo'
+      await bot.obs.restartVideo('Screen', videoName)
+    return inner
+
+  newCmd = commands.Command(p.stem, cmdGenerator(p.stem.lower()))
+  bot.add_command(newCmd)
 
 asyncio.run(botConfig['Obs'].apply(bot.obs)(subscriptions=0))
 bot.run()
