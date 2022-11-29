@@ -15,8 +15,11 @@ class discordEntry:
     self.name = name
     self.__token: str|None = token
     self._setToken: bool = token is not None
-  def apply(self, bot):
-    return lambda *args, **kwargs: bot.run(self.__token, *args, **kwargs)
+  def apply(self, bot, run_async=False):
+    if run_async:
+      return lambda *args, **kwargs: bot.start(self.__token, *args, **kwargs)
+    else:
+      return lambda *args, **kwargs: bot.run(self.__token, *args, **kwargs)
     
   def __repr__(self) -> str:
     return f'DiscordBot[ {self.name}{"" if self._setToken else " (no token set)"} ]'

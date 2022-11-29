@@ -8,6 +8,7 @@ import pytz
 import random
 import re
 
+from twitchio import Message
 from twitchio.ext import commands
 from obs_server import *
 from pathlib import Path
@@ -69,38 +70,42 @@ class Bot(commands.Bot):
       for cmdName in keys:
         if cmdName in obsCommands:
           self.remove_command(cmdName)
-      for (cmdName, cmdArgs) in obsCommands.items():
-        self.videoCommands[cmdName] = cmdArgs
-        def getCmdFunc(videoName: str, cmdArgs: ObsVideoCommand):
-          arr = [videoName]
-          cmdArgs = cmdArgs
-          async def inner(ctx: commands.Context):
-            videoName = arr[0]
-            print(repr(videoName))
-            videoName = videoName.lower()
-            crop: Rect = cmdArgs.cropRect
-            pos: Vec2 = cmdArgs.position
-            scale: Vec2 = cmdArgs.scale
-            transformation = dict(
-              cropBottom = crop.bottom,
-              cropLeft = crop.left,
-              cropRight = crop.right,
-              cropTop = crop.top,
-              positionX = pos.x,
-              positionY = pos.y,
-              scaleX = scale.x,
-              scaleY = scale.y,
-            )
-            await bot.obs.startVideo(cmdArgs.sourceName, cmdArgs.volumeInDb, cmdArgs.path, transformation)
-          return inner
-        cmd = commands.Command(cmdName, getCmdFunc(cmdName, cmdArgs))
-        self.add_command(cmd)
+    else:
+      for cmdName in self.videoCommands:
+        self.remove_command(cmdName)
+      self.videoCommands.clear()
+    for (cmdName, cmdArgs) in obsCommands.items():
+      self.videoCommands[cmdName] = cmdArgs
+      def getCmdFunc(videoName: str, cmdArgs: ObsVideoCommand):
+        arr = [videoName]
+        cmdArgs = cmdArgs
+        async def inner(ctx: commands.Context):
+          videoName = arr[0]
+          print(repr(videoName))
+          videoName = videoName.lower()
+          crop: Rect = cmdArgs.cropRect
+          pos: Vec2 = cmdArgs.position
+          scale: Vec2 = cmdArgs.scale
+          transformation = dict(
+            cropBottom = crop.bottom,
+            cropLeft = crop.left,
+            cropRight = crop.right,
+            cropTop = crop.top,
+            positionX = pos.x,
+            positionY = pos.y,
+            scaleX = scale.x,
+            scaleY = scale.y,
+          )
+          await bot.obs.startVideo(cmdArgs.sourceName, cmdArgs.volumeInDb, cmdArgs.path, transformation)
+        return inner
+      cmd = commands.Command(cmdName, getCmdFunc(cmdName, cmdArgs))
+      self.add_command(cmd)
 
 
 bot = Bot('buggynoodles', ['NextBigIdea'])
 
-@bot.command(aliases=['h'])
-async def help(ctx: commands.Context, *cmds: str):
+@bot.command(aliases=['bot'])
+async def bothelp(ctx: commands.Context, *cmds: str):
   allCmds = dict(
     ping = 'Check ob ich da bin',
     discord = 'Invitation für discord',
@@ -108,7 +113,7 @@ async def help(ctx: commands.Context, *cmds: str):
     time = 'Aktuelle Zeit bei mir oder in einer Zeitzone ("!time Asia/Tokyo", "!time UTC", ..)',
     image = 'Blendet ein Bild in Obs ein, siehe "!image list"',
     video = 'Spielt kurzes Video ab, siehe "!video list"',
-    help = 'Dieser Hilfetext',
+    bot = 'Dieser Hilfetext',
   )
   validCmds = list({c for c in cmds if c in allCmds})
   invalidCmds = list({c for c in cmds if c not in allCmds})
@@ -170,41 +175,29 @@ async def image(ctx: commands.Context, imgName:str=''):
   await bot.obs.changeImage('Screen', 'Image', path, None, 400)
 
 @bot.command()
-async def video(ctx: commands.Context, videoName:str=''):
-  print(repr(videoName))
-  regex = re.fullmatch('[\w ]*', videoName if videoName else '')
-  if not regex: return
-  videoName = videoName.lower()
-  if videoName == 'list':
-    imgs = [p.stem for p in Path('videos').glob('*') if p.is_file()]
-    # knownImgs = '"%s"' % ('", "'.join(imgs))
-    knownImgs = ' '.join(imgs)
-    await ctx.send(f'@{ctx.author.name} {knownImgs}')
-    return
+async def video(ctx: commands.Context, subcmd:str=''):
+  subcmd = subcmd.strip().lower()
+  print(ctx.message)
+  if subcmd == 'list':
+    videoCmds = list(toml.load('obs_videos.toml').keys())
+    knownCmds = ' '.join(videoCmds)
+    await ctx.send(f'{knownCmds}')
+  elif subcmd == 'update':
+    if ctx.author.is_broadcaster or ctx.author.is_mod:
+      with open('obs_videos.toml', 'r') as f:
+        data = obsVideoCommandFromToml(f.read())
+        await bot.update_obs_commands(data, False)
+    else:
+      await ctx.send(f'@{ctx.author.name} is not in the sudoers file! This incident will be reported!')
   else:
-    if re.fullmatch('noooo+[!1h]*', videoName): videoName = 'noooo'
-    await bot.obs.restartVideo('Screen', videoName)
+    await ctx.send(f'@{ctx.author.name} "{subcmd}" nicht in Liste bekannter Commands: list | update')
 
-for p in Path('videos').glob('*'):
-  if not p.is_file():
-    continue
-  def cmdGenerator(videoName: str):
-    arr = [videoName]
-    async def inner(ctx: commands.Context):
-      videoName = arr[0]
-      print(repr(videoName))
-      videoName = videoName.lower()
-      if re.fullmatch('noooo+[!1h]*', videoName): videoName = 'noooo'
-      await bot.obs.restartVideo('Screen', videoName)
-    return inner
 
-  newCmd = commands.Command(p.stem, cmdGenerator(p.stem.lower()))
-  bot.add_command(newCmd)
 
 asyncio.run(botConfig['Obs'].apply(bot.obs)(subscriptions=EventSubscription.MediaInputs))
 with open('obs_videos.toml', 'r') as f:
   data = obsVideoCommandFromToml(f.read())
-  asyncio.run(bot.update_obs_commands(data, True))
+  asyncio.run(bot.update_obs_commands(data, False))
 bot.obs.addAsyncioTask()
 bot.run()
 # bot.run() is blocking and will stop execution of any below code here until stopped or closed.

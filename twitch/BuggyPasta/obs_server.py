@@ -259,17 +259,6 @@ class ObsClient(ObsWSClient):
     status: OpCode7Status = resp.status
     return status
 
-  async def restartVideo(self, sceneName:str, itemName: str):
-    print(itemName)
-    idStr = f'restartVideo({sceneName}, {itemName})'
-    fullId = f'{idStr}_{random.randint(0, 999)}'
-    resp = await self.getResponse('TriggerMediaInputAction', fullId, 
-      inputName=itemName,
-      mediaAction = 'OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART' )
-    print(resp)
-    status: OpCode7Status = resp.status
-    return status
-
 
   async def startVideo(self, name: str, volume_in_db:int, path: str|Path, transformation:dict[str, str], monitor_type='OBS_MONITORING_TYPE_MONITOR_ONLY', sceneName='Screen'):
     if not isinstance(path, Path): path = Path(path)
@@ -341,7 +330,6 @@ class ObsClient(ObsWSClient):
     asyncio.get_event_loop().create_task(self.cbHandle.keep_recv())
 
 
-
 class CallbackClient(ObsWSClient):
   def __init__(self):
     super().__init__()
@@ -351,10 +339,6 @@ class CallbackClient(ObsWSClient):
 
   async def _connect(self, pwd: str | None, rpcVer: int | None = None, subscriptions: int | None = None, overrideRpcVer: bool = True):
     await super()._connect(pwd, rpcVer, subscriptions, overrideRpcVer)
-    # self.thread.start()
-
-  # def keep_recv_blocking(self):
-  #   asyncio.run(self.keep_recv())
 
   async def keep_recv(self):
     print('Started listener thread')
@@ -373,16 +357,17 @@ class CallbackClient(ObsWSClient):
     print('Stopped listener thread')
 
 
-
-
 if __name__ == '__main__':
   obs = ObsClient()
   restartAction = 'OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART'
   asyncio.run(botConfig['Obs'].apply(obs)(subscriptions=EventSubscription.MediaInputs))
-  asyncio.get_event_loop().create_task(obs.cbHandle.keep_recv())
+  # asyncio.get_event_loop().create_task(obs.cbHandle.keep_recv())
   resp = asyncio.run(obs.getResponse('GetSceneItemList', '', 
     sceneName='Videos'))
   resp
+
+  for sceneItem in resp.data['sceneItems']:
+    print(f'* sourceName: {sceneItem["sourceName"]}', f'trafo: {sceneItem["sceneItemTransform"]}', sep='\n  ')
 
   
   inputName = 'new_video'
@@ -400,8 +385,8 @@ if __name__ == '__main__':
     scaleY = 0.5601851940155029,
   )
 
-  resp = asyncio.run(obs.startVideo(inputName, volume_in_db, test_path, sceneItemTransform))
-  resp
+  # resp = asyncio.run(obs.startVideo(inputName, volume_in_db, test_path, sceneItemTransform))
+  # resp
   # while True:
   #   asyncio.run(obs.recv())
   #asyncio.run(obs.recv())
