@@ -9,10 +9,17 @@ import random
 import re
 
 from twitchio.ext import commands
-from obs_server2 import *
+from obs_server import *
 from pathlib import Path
+from collections import namedtuple
 
 buggyPastaConfig = botConfig['Twitch']['BuggyPasta']
+
+
+Rect = namedtuple('Rect', 'bottom left right top')
+Vec2 = namedtuple('Vec2', 'x y')
+ObsVideoCommand = namedtuple('ObsVideoCommand', 'sourceName volumeInDb path cropRect position scale')
+
 
 class Bot(commands.Bot):
   def __init__(self, botUser: str, channels=[]):
@@ -23,12 +30,47 @@ class Bot(commands.Bot):
     self.botUserConfig.apply(
       lambda token: super(Bot, self).__init__(token=token, prefix='!', initial_channels=channels)
       )
-    self.obs = ObsServer()
+    self.obs = ObsClient()
+    self.videoCommands: dict[str, ObsVideoCommand] = {}
 
 
   async def event_ready(self):
     print(f'Logged in as | {self.nick}')
     print(f'User id is | {self.user_id}')
+
+  async def update_obs_commands(self, obsCommands: dict[str, ObsVideoCommand], appendOnly: bool): #TODO: Call this
+    if appendOnly:
+      keys = list(self.videoCommands.keys())
+      for cmdName in keys:
+        if cmdName in obsCommands:
+          self.remove_command(cmdName)
+      for (cmdName, cmdArgs) in obsCommands:
+        self.videoCommands[cmdName] = cmdArgs
+        def getCmdFunc(videoName: str, cmdArgs: ObsVideoCommand):
+          arr = [videoName]
+          cmdArgs = cmdArgs
+          async def inner(ctx: commands.Context):
+            videoName = arr[0]
+            print(repr(videoName))
+            videoName = videoName.lower()
+            crop: Rect = cmdArgs.cropRect
+            pos: Vec2 = cmdArgs.position
+            scale: Vec2 = cmdArgs.scale
+            transformation = dict(
+              cropBottom = crop.bottom,
+              cropLeft = crop.left,
+              cropRight = crop.right,
+              cropTop = crop.top,
+              positionX = pos.x,
+              positionY = pos.y,
+              scaleX = scale.x,
+              scaleY = scale.y,
+            )
+            await bot.obs.startVideo(cmdArgs.sourceName, cmdArgs.volumeInDb, cmdArgs.path, transformation)
+          return inner
+        cmd = commands.Command(cmdName, getCmdFunc(cmdName))
+        self.add_command(cmd)
+
 
 bot = Bot('buggynoodles', ['NextBigIdea'])
 
@@ -135,6 +177,7 @@ for p in Path('videos').glob('*'):
   bot.add_command(newCmd)
 
 asyncio.run(botConfig['Obs'].apply(bot.obs)(subscriptions=0))
+#bot.obs.addAsyncioTask()
 bot.run()
 # bot.run() is blocking and will stop execution of any below code here until stopped or closed.
 
