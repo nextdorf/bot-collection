@@ -199,7 +199,7 @@ class obsEntry:
     self._host = host
     self._port = port
     self.__password = password
-  def apply(self, obs: 'ObsServer'):
+  def apply(self, obs: 'ObsClient'):
     return lambda **kwargs: obs._connect(pwd=self.__password, **kwargs)
 
   def __repr__(self) -> str:

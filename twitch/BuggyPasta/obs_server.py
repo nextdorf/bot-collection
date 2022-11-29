@@ -293,7 +293,7 @@ class ObsClient(ObsWSClient):
       return status
 
     resp = await self.getResponse('SetSceneItemTransform', fullId,
-      sceneName=sceneName, sceneItemId=sceneItemId, sceneItemTransform=sceneItemTransform)
+      sceneName=sceneName, sceneItemId=sceneItemId, sceneItemTransform=transformation)
     status = resp.status
     if not status.result:
       await self.getResponse('RemoveSceneItem', fullId, sceneName=sceneName, sceneItemId=sceneItemId)
@@ -334,6 +334,7 @@ class ObsClient(ObsWSClient):
 
     listener = EventListener(callback, inputName=name)
     self.cbHandle.eventListeners.append(listener)
+    print(f'Added listener "{listener.inputName}"')
     return status
 
   def addAsyncioTask(self):
@@ -356,6 +357,7 @@ class CallbackClient(ObsWSClient):
   #   asyncio.run(self.keep_recv())
 
   async def keep_recv(self):
+    print('Started listener thread')
     while self.keep_running and not self.ws.closed:
       event = await self.recv()
       if isinstance(event, OpCode5):
@@ -364,6 +366,7 @@ class CallbackClient(ObsWSClient):
           listener = self.eventListeners[i]
           continueListening = await listener(event)
           if not continueListening:
+            print(f'Removed listener "{self.eventListeners[i].inputName}"')
             del self.eventListeners[i]
           else:
             i+=1
@@ -375,7 +378,7 @@ class CallbackClient(ObsWSClient):
 if __name__ == '__main__':
   obs = ObsClient()
   restartAction = 'OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART'
-  asyncio.run(botConfig['Obs'].apply(obs)(subscriptions=EventSubscription.MediaInputs)) #TODO: apply
+  asyncio.run(botConfig['Obs'].apply(obs)(subscriptions=EventSubscription.MediaInputs))
   asyncio.get_event_loop().create_task(obs.cbHandle.keep_recv())
   resp = asyncio.run(obs.getResponse('GetSceneItemList', '', 
     sceneName='Videos'))

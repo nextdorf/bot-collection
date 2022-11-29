@@ -12,6 +12,7 @@ from twitchio.ext import commands
 from obs_server import *
 from pathlib import Path
 from collections import namedtuple
+import toml
 
 buggyPastaConfig = botConfig['Twitch']['BuggyPasta']
 
@@ -19,6 +20,30 @@ buggyPastaConfig = botConfig['Twitch']['BuggyPasta']
 Rect = namedtuple('Rect', 'bottom left right top')
 Vec2 = namedtuple('Vec2', 'x y')
 ObsVideoCommand = namedtuple('ObsVideoCommand', 'sourceName volumeInDb path cropRect position scale')
+
+def obsVideoCommandIntoToml(cmds: dict[str, ObsVideoCommand]):
+  ret = {}
+  for (cmdName, videoCmd) in cmds.items():
+    cropRect: Rect = videoCmd.cropRect
+    pos: Vec2 = videoCmd.position
+    scale: Vec2 = videoCmd.scale
+    ret[cmdName] = dict(sourceName=videoCmd.sourceName, volumeInDb=videoCmd.volumeInDb, path=videoCmd.path,
+      crop=dict(bottom=cropRect.bottom, left=cropRect.left, right=cropRect.right, top=cropRect.top),
+      position=dict(x=pos.x, y=pos.y), scale=dict(x=scale.x, y=scale.y))
+  return toml.dumps(ret)
+
+def obsVideoCommandFromToml(tomlData: str):
+  data = toml.loads(tomlData)
+  ret = {}
+  for (cmdName, cmdArgs) in data.items():
+    args = cmdArgs.copy()
+    args['cropRect'] = Rect(**args['cropRect'])
+    args['position'] = Vec2(**args['position'])
+    args['scale'] = Vec2(**args['scale'])
+    ret[cmdName] = ObsVideoCommand(**args)
+  return ret
+
+# print(obsVideoCommandIntoToml({'test': ObsVideoCommand('new_video', -12, 'videos/lol.webm', Rect(0, 320, 300, 0), Vec2(728, 285.0), Vec2(-0.56, 0.56))}))
 
 
 class Bot(commands.Bot):
@@ -44,7 +69,7 @@ class Bot(commands.Bot):
       for cmdName in keys:
         if cmdName in obsCommands:
           self.remove_command(cmdName)
-      for (cmdName, cmdArgs) in obsCommands:
+      for (cmdName, cmdArgs) in obsCommands.items():
         self.videoCommands[cmdName] = cmdArgs
         def getCmdFunc(videoName: str, cmdArgs: ObsVideoCommand):
           arr = [videoName]
@@ -68,7 +93,7 @@ class Bot(commands.Bot):
             )
             await bot.obs.startVideo(cmdArgs.sourceName, cmdArgs.volumeInDb, cmdArgs.path, transformation)
           return inner
-        cmd = commands.Command(cmdName, getCmdFunc(cmdName))
+        cmd = commands.Command(cmdName, getCmdFunc(cmdName, cmdArgs))
         self.add_command(cmd)
 
 
@@ -176,8 +201,11 @@ for p in Path('videos').glob('*'):
   newCmd = commands.Command(p.stem, cmdGenerator(p.stem.lower()))
   bot.add_command(newCmd)
 
-asyncio.run(botConfig['Obs'].apply(bot.obs)(subscriptions=0))
-#bot.obs.addAsyncioTask()
+asyncio.run(botConfig['Obs'].apply(bot.obs)(subscriptions=EventSubscription.MediaInputs))
+with open('obs_videos.toml', 'r') as f:
+  data = obsVideoCommandFromToml(f.read())
+  asyncio.run(bot.update_obs_commands(data, True))
+bot.obs.addAsyncioTask()
 bot.run()
 # bot.run() is blocking and will stop execution of any below code here until stopped or closed.
 
