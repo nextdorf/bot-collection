@@ -53,22 +53,8 @@ async def on_message(msg: Message):
   if s.find('arch btw')>=0:
     await msg.reply(f'```{ascii_logos["arch"]}```')
 
-if False and __name__ == '__main__':
-  runner = botConfig['Discord']['BuggyPasta'].apply(bot, run_async=False)
-  runner(log_handler=handler, log_level=logging.DEBUG)
-else:
-  runner = botConfig['Discord']['BuggyPasta'].apply(bot, run_async=True)
-  async def runOnce():
-    videoCmdChannel = next((ch for ch in bot.get_all_channels() if ch.name=='video-commands' and isinstance(ch, discord.TextChannel)), None)
+runner = botConfig['Discord']['BuggyPasta'].apply(bot, run_async=False)
+runner(log_handler=handler, log_level=logging.DEBUG)
 
-    msgs = [m async for m in videoCmdChannel.history()]
-    # await bot.close()
-    return msgs
 
-  asyncio.get_event_loop().create_task(runner())
-  videoCmdChannel = next((ch for ch in bot.get_all_channels() if ch.name=='video-commands' and isinstance(ch, discord.TextChannel)), None)
-  msgs = asyncio.run(runOnce())
-  msg0 = msgs[-1]
-  msg0.content
-  msg0.reactions
-  isApproved = next((True for r in msg0.reactions if r.emoji.name == 'approved'), False)
+

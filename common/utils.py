@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Callable
+from collections import namedtuple
 import toml
 import string
 import secrets
@@ -340,7 +341,53 @@ class config(dict):
     return f'{header}\n{tomlRepr}'
   def __str__(self) -> str:
     return repr(self)
-    
+
+
+Rect = namedtuple('Rect', 'bottom left right top')
+Vec2 = namedtuple('Vec2', 'x y')
+ObsVideoCommand = namedtuple('ObsVideoCommand', 'sourceName volumeInDb message_id message_timestamp approval_timestamp submitter submitter_twitch path cropRect position scale')
+
+def toInlineDict(d:dict[str, any], depth=2):
+  ret = toml.TomlDecoder().get_empty_inline_table() if depth == 0 else {}
+  for (k, v) in d.items():
+    ret[k] = toInlineDict(v, depth if depth<=0 else depth-1) if isinstance(v, dict) else v
+  return ret
+
+def obsVideoCommandsIntoDict(cmd: ObsVideoCommand):
+  cropRect0: Rect|None = cmd.cropRect
+  cropRect = {k:v for k,v in cropRect0._asdict().items() if bool(v)} if cropRect0 else None
+  pos: Vec2|None = cmd.position
+  scale: Vec2|None = cmd.scale
+  full_dict = cmd._asdict() | dict(
+    cropRect=cropRect if cropRect else None,
+    position=pos._asdict() if pos and (pos.x or pos.y) else None,
+    scale=scale._asdict() if scale and (scale.x!=1 or scale.y!=1) else None
+  )
+  return {k: v for k, v in full_dict.items() if v is not None}
+
+def obsVideoCommandsIntoToml(cmds: dict[str, ObsVideoCommand]):
+  ret = {name: obsVideoCommandsIntoDict(cmd) for name, cmd in cmds.items()}
+  return toml.dumps(toInlineDict(ret, 2), encoder=toml.TomlPreserveCommentEncoder(preserve=True))
+
+def obsVideoCommandsFromDict(cmdArgs: dict[str, any], withDefaults:dict[str, any]|None = None):
+  cropRect0 = dict(bottom=0, left=0, right=0, top=0)
+  position0 = dict(x=0.0, y=0.0)
+  scale0 = dict(x=1.0, y=1.0)
+  args0 = dict(message_id=None, message_timestamp=None, approval_timestamp=None, submitter=None, submitter_twitch=None)
+  if withDefaults is None:
+    args = args0 | cmdArgs
+  else:
+    args = args0 | withDefaults | cmdArgs
+  args['cropRect'] = Rect(**(cropRect0 | args.get('cropRect', {})))
+  args['position'] = Vec2(**(position0 | args.get('position', {})))
+  args['scale'] = Vec2(**(scale0 | args.get('scale', {})))
+  return ObsVideoCommand(**args)
+
+def obsVideoCommandsFromToml(tomlData: str):
+  data: dict[str, dict[str, str]] = toml.loads(tomlData)
+  ret = {name: obsVideoCommandsFromDict(cmd, dict(sourceName=name)) for name, cmd in data.items()}
+  return ret
+
 
 # botConfig = config.fromFile('../local/config')
 botConfig = config.fromFile('~/.config/bot-collection/config')
