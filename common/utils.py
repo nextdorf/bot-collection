@@ -345,7 +345,7 @@ class config(dict):
 
 Rect = namedtuple('Rect', 'bottom left right top')
 Vec2 = namedtuple('Vec2', 'x y')
-ObsVideoCommand = namedtuple('ObsVideoCommand', 'sourceName volumeInDb message_id message_timestamp approval_timestamp submitter submitter_twitch path cropRect position scale')
+ObsVideoCommand = namedtuple('ObsVideoCommand', 'sourceName volumeInDb message_id created_at submitter submitter_twitch path cropRect position scale')
 
 def toInlineDict(d:dict[str, any], depth=2):
   ret = toml.TomlDecoder().get_empty_inline_table() if depth == 0 else {}
@@ -373,7 +373,7 @@ def obsVideoCommandsFromDict(cmdArgs: dict[str, any], withDefaults:dict[str, any
   cropRect0 = dict(bottom=0, left=0, right=0, top=0)
   position0 = dict(x=0.0, y=0.0)
   scale0 = dict(x=1.0, y=1.0)
-  args0 = dict(message_id=None, message_timestamp=None, approval_timestamp=None, submitter=None, submitter_twitch=None)
+  args0 = dict(message_id=None, created_at=None, submitter=None, submitter_twitch=None)
   if withDefaults is None:
     args = args0 | cmdArgs
   else:

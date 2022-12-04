@@ -156,7 +156,7 @@ async def video(ctx: commands.Context, subcmd:str=''):
   elif subcmd == 'update':
     if ctx.author.is_broadcaster or ctx.author.is_mod:
       with open('obs_videos.toml', 'r') as f:
-        data = obsVideoCommandFromToml(f.read())
+        data = obsVideoCommandsFromToml(f.read())
         await bot.update_obs_commands(data, False)
     else:
       await ctx.send(f'@{ctx.author.name} is not in the sudoers file! This incident will be reported!')
@@ -167,7 +167,7 @@ async def video(ctx: commands.Context, subcmd:str=''):
 
 asyncio.run(botConfig['Obs'].apply(bot.obs)(subscriptions=EventSubscription.MediaInputs))
 with open('obs_videos.toml', 'r') as f:
-  data = obsVideoCommandFromToml(f.read())
+  data = obsVideoCommandsFromToml(f.read())
   data['wow']
   asyncio.run(bot.update_obs_commands(data, False))
 bot.obs.addAsyncioTask()

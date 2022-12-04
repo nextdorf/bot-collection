@@ -13,6 +13,21 @@ import asyncio
 from pathlib import Path
 
 
+def getCodeBlock(s:str):
+  if s.startswith('```'):
+    idxStart = 0
+  else:
+    idxStart = s.find('\n```')+1
+    if idxStart == 0:
+      return None
+  idxStart+=3
+  if s[idxStart:].lower().startswith('toml'):
+    idxStart += 4
+  idxEnd = s.find('```', idxStart)
+  if idxEnd < 0:
+    return None
+  return s[idxStart: idxEnd]
+
 class videoCommandHandle:
   def __init__(self, channel:discord.TextChannel, media_dir:Path|str='discord_media', config_file:Path|str='obs_videos.toml') -> None:
     self.channel = channel
@@ -56,32 +71,83 @@ class videoCommandHandle:
   #         was_updated = True
   #   return cmds, was_updated
 
+  async def removeApproval(self, approvalReaction: discord.Reaction):
+    if approvalReaction is None:
+      return
+    async for user in approvalReaction.users():
+      await approvalReaction.remove(user)
+
   async def handleMessage(self, message_id: int, cmds: dict[str, 'ObsVideoCommand']|None=None):
     if cmds is None:
       with open(str(self.config_file), 'r') as f:
         cmds = obsVideoCommandsFromToml(f.read())
-    was_updated = False
-    (oldMsgKey, oldMsgCmd) = next(((k, v) for k, v in cmds.items() if v.message_id==message_id), (None, None))
+    (msgKey, msgCmd) = next(((k, v) for k, v in cmds.items() if v.message_id==message_id), (None, None))
 
+    print('here')
     msg = await self.channel.fetch_message(message_id)
     submitter = msg.author.display_name
     createdAt = msg.created_at
-    timestamp = msg.edited_at if msg.edited_at else createdAt
+    isEdited = msg.edited_at is not None
     approvalReaction = next((r for r in msg.reactions if isinstance(r.emoji, discord.Emoji) and r.emoji.name == 'approved'), None)
-    approvalReaction.
-    isApproved = approvalReaction is not None
+    isApproved = approvalReaction is not None #FIXME: reaction isn't found for some reason
+    print('here')
     if isApproved:
-      if oldMsgCmd is not None:
-        if timestamp == oldMsgCmd.message_timestamp:
-          return cmds, was_updated
-    else:
-      return cmds, was_updated
+      if isEdited:
+        await self.removeApproval(approvalReaction)
+      #TODO: Add "was added" reaction to distinguesh between "approved and pending" and "approved and added"
+      if isEdited or msgCmd is not None: #Edits not allowed
+        return cmds, False
+    elif msgCmd is not None: #Ignore unapproved messages
+      return cmds, False #FIXME: Case doesn't work as expected
 
-    attachment = msg.attachments[0] if len(msg.attachments) == 1 else 
-    #TODO: Fix this mess!!!
+    print('here')
+    #Is unedited and not in the system yet and approved
+    attachment = msg.attachments[0] if len(msg.attachments) == 1 else None
+    isVideoAttachment = attachment.content_type.split('/')[0] == 'video' if attachment is not None else None
+    if not isVideoAttachment:
+      return cmds, False
+    
+    print('here')
+    try:
+      tomlContent = getCodeBlock(msg.content)
+      [(newMsgKey, cmdDict)] = toml.loads(tomlContent).items()
+      newMsgCmd = obsVideoCommandsFromDict(cmdDict, dict(sourceName=newMsgKey, path='unspecified'))
+      # newMsgCmd.path = None
+      newMsgCmd = newMsgCmd._asdict() | dict(path=None)
+    except:
+      print('here F')
+      return cmds, False
 
+    newMsgCmd['submitter'] = submitter
+    newMsgCmd['created_at'] = createdAt
+    newMsgCmd['message_id'] = message_id
+    newMsgCmd['sourceName'] = newMsgKey
+    newMsgCmd['path'] = None
+    
+    print('here A')
+    if newMsgKey in cmds: #replace cmd with new command, but only if from same user, or oldcmd not approved anymore
+      msgCmd = cmds[newMsgKey]
+      sameUser = msgCmd.submitter == newMsgCmd['submitter'] or msgCmd.submitter_twitch == newMsgCmd['submitter_twitch']
+      oldmsg = await self.channel.fetch_message(msgCmd.message_id)
+      isApproved = next((True for r in oldmsg.reactions if isinstance(r.emoji, discord.Emoji) and r.emoji.name == 'approved'), False)
+      if (not sameUser) or isApproved:
+        return cmds, False
+      newMsgCmd['path'] = msgCmd.path
 
-
+    print('here')
+    if newMsgCmd['path'] is None:
+      path0 = self.media_dir / attachment.filename
+      parent_path = (path0 / '..').expanduser().resolve()
+      validFileName = parent_path.samefile(self.media_dir)
+      if not validFileName:
+        await self.removeApproval(approvalReaction)
+        return cmds, False
+      newMsgCmd['path'] = str(path0)
+        
+    print('here')
+    await attachment.save(newMsgCmd['path'])
+    cmds[newMsgKey] = ObsVideoCommand(**newMsgCmd)
+    return cmds, True
 
 
 intents = discord.Intents.default()
@@ -105,6 +171,8 @@ async def on_message(msg: Message):
 runner = botConfig['Discord']['BuggyPasta'].apply(bot, run_async=True)
 async def runOnce():
   videoCmdChannel = next((ch for ch in bot.get_all_channels() if ch.name=='video-commands' and isinstance(ch, discord.TextChannel)), None)
+  if videoCmdChannel is None:
+    videoCmdChannel = await bot.fetch_channel(1047262752604958790)
 
   msgs = [m async for m in videoCmdChannel.history()]
   # await bot.close()
@@ -114,23 +182,25 @@ asyncio.get_event_loop().create_task(runner())
 videoCmdChannel = next((ch for ch in bot.get_all_channels() if ch.name=='video-commands' and isinstance(ch, discord.TextChannel)), None)
 msgs = asyncio.run(runOnce())
 
-msg0 = msgs[-1]
-msg0.content
-msg0.activity
-print(msg0.id, 'https://discord.com/channels/1039221680054214746/1047262752604958790/1047267620518375425')
-msg0.content
-msg0.reactions
-approvalReaction = next((r for r in msg0.reactions if r.emoji.name == 'approved'), None)
-isApproved = approvalReaction is not None
+msg0 = msgs[0]
+# msg0.content
+# print(msg0.id, 'https://discord.com/channels/1039221680054214746/1047262752604958790/1047267620518375425')
+# msg0.content
+# msg0.reactions
+# msg0.created_at
+# approvalReaction = next((r for r in msg0.reactions if r.emoji.name == 'approved'), None)
+# isApproved = approvalReaction is not None
+# msg0.ed
 
-pins = asyncio.run(videoCmdChannel.pins())
-pin0 = pins[0]
-pin0.reference
+# timestamp = msg0.created_at if msg0.edited_at is None else msg0.edited_at
+# media = msg0.attachments[0]
+# media.content_type
+# asyncio.run(media.save(Path('discord_media/lol.webm')))
 
 
-timestamp = msg0.created_at if msg0.edited_at is None else msg0.edited_at
-media = msg0.attachments[0]
-asyncio.run(media.save(Path('discord_media/lol.webm')))
+
+videoHnd = videoCommandHandle(msg0.channel, config_file='/home/next/Gits/bot-collection/twitch/BuggyPasta/obs_videos_test.toml')
+asyncio.run(videoHnd.handleMessage(msg0.id))
 
 
 
