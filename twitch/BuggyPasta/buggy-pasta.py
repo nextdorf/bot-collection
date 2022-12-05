@@ -150,12 +150,12 @@ async def video(ctx: commands.Context, subcmd:str=''):
   subcmd = subcmd.strip().lower()
   print(ctx.message)
   if subcmd == 'list':
-    videoCmds = list(toml.load('obs_videos.toml').keys())
+    videoCmds = list(toml.load('obs_videos_test.toml').keys())
     knownCmds = ' '.join(videoCmds)
     await ctx.send(f'{knownCmds}')
   elif subcmd == 'update':
     if ctx.author.is_broadcaster or ctx.author.is_mod:
-      with open('obs_videos.toml', 'r') as f:
+      with open('obs_videos_test.toml', 'r') as f:
         data = obsVideoCommandsFromToml(f.read())
         await bot.update_obs_commands(data, False)
     else:
@@ -166,9 +166,8 @@ async def video(ctx: commands.Context, subcmd:str=''):
 
 
 asyncio.run(botConfig['Obs'].apply(bot.obs)(subscriptions=EventSubscription.MediaInputs))
-with open('obs_videos.toml', 'r') as f:
+with open('obs_videos_test.toml', 'r') as f:
   data = obsVideoCommandsFromToml(f.read())
-  data['wow']
   asyncio.run(bot.update_obs_commands(data, False))
 bot.obs.addAsyncioTask()
 bot.run()
