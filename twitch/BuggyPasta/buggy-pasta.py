@@ -108,6 +108,10 @@ async def discord(ctx: commands.Context):
   await ctx.send('https://discord.gg/tUPJrMm9Mw')
 
 @bot.command()
+async def github(ctx: commands.Context):
+  await ctx.send('https://github.com/nextdorf')
+
+@bot.command()
 async def time(ctx: commands.Context, *tzs: str):
   if tzs:
     for tz in tzs:
